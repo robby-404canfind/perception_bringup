@@ -1,0 +1,22 @@
+yolo_detector:
+  ros__parameters:
+    model: "yolo26n.pt"
+    threshold: 0.5
+    device: "cuda:0"
+    image_topic: "/Tiago_Lite/Astra_rgb/image_color"
+    depth_topic: "/Tiago_Lite/Astra_depth/image"
+    detection_topic: "/perception/detections"
+
+perception_context_builder:
+  ros__parameters:
+    vlm_backend: "ollama"
+    vlm_model: "qwen2.5vl:7b"
+    vlm_mock_mode: false
+    min_trigger_interval: 5.0
+    image_topic: "/Tiago_Lite/Astra_rgb/image_color"
+    detection_topic: "/perception/detections"
+    context_raw_topic: "/perception/context/raw"
+    context_summary_topic: "/perception/context/summary"
+    snapshot_request_topic: "/perception/snapshot/request"
+    snapshot_image_topic: "/perception/snapshot/image"
+    snapshot_info_topic: "/perception/snapshot/info"
