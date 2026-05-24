@@ -2,7 +2,6 @@
 
 Ch03 LLMClient 패턴을 확장하여 이미지 입력을 지원합니다.
 Social Navigation scene understanding의 핵심 엔진입니다.
-mock_mode=True면 VLM 호출 없이 기본 응답을 반환합니다.
 """
 
 import base64
@@ -22,7 +21,7 @@ _DEFAULT_SCENE_PROMPT = """\
   "scene_summary": "장면 한 줄 요약 (한국어)",
   "social_hints": [
     {
-      "type": "avoid_between_people | prefer_side_pass | slow_down | clear_path",
+      "type": "avoid_between_people",
       "reason": "이유 (영어, 짧게)",
       "confidence": 0.0~1.0,
       "side": "left | right (해당 시에만)",
@@ -31,6 +30,7 @@ _DEFAULT_SCENE_PROMPT = """\
   ]
 }
 
+type 필드는 반드시 avoid_between_people, prefer_side_pass, slow_down, clear_path 중 하나의 문자열만 사용하라.
 social_hints가 없으면 빈 배열 []을 반환하라.
 """
 
@@ -46,36 +46,26 @@ _DEFAULT_BACKENDS = {
 
 
 class VLMClient:
-    """Edge/Cloud VLM 통합 클라이언트 (mock fallback 포함)."""
+    """Edge/Cloud VLM 통합 클라이언트."""
 
     def __init__(
         self,
         backend: str = "ollama",
         model: str = "qwen2.5vl:7b",
-        mock_mode: bool = False,
         timeout: float = 30.0,
     ):
-        self.mock_mode = mock_mode
         self.backend = backend
         self.model = model
 
-        if not mock_mode:
-            if backend not in _DEFAULT_BACKENDS:
-                raise ValueError(f"Unknown VLM backend: {backend}")
-            config = _DEFAULT_BACKENDS[backend].copy()
-            if backend == "openrouter":
-                config["api_key"] = os.environ.get("OPENROUTER_API_KEY", "")
-            self.client = OpenAI(**config, timeout=timeout)
+        if backend not in _DEFAULT_BACKENDS:
+            raise ValueError(f"Unknown VLM backend: {backend}")
+        config = _DEFAULT_BACKENDS[backend].copy()
+        if backend == "openrouter":
+            config["api_key"] = os.environ.get("OPENROUTER_API_KEY", "")
+        self.client = OpenAI(**config, timeout=timeout)
 
     def describe_scene(self, cv_image: np.ndarray, prompt: str | None = None) -> dict:
         """이미지 → 구조화된 장면 분석 JSON."""
-        if self.mock_mode:
-            return {
-                "scene_summary": "mock: 정상 상황",
-                "social_hints": [],
-                "confidence": "low",
-            }
-
         b64 = self._encode_image(cv_image)
         messages = [
             {

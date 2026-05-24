@@ -2,19 +2,19 @@
 
 /perception/detections를 구독하여 /perception/context/raw (JSON)와
 /perception/context/summary (한국어 요약)를 publish합니다.
-VLM Trigger 조건이 충족되면 snapshot을 캡처하고 VLM을 호출합니다.
+VLM Trigger 조건이 충족되면 최신 RGB 프레임으로 VLM을 호출합니다.
+별도의 snapshot request를 받으면 현재 RGB 프레임을 sensor_msgs/Image로 publish합니다.
 """
 
 import json
 import time
 from threading import Thread
 
-import cv2
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
-from sensor_msgs.msg import CompressedImage, Image
+from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
 from .perception_trigger import PerceptionTrigger
@@ -28,7 +28,6 @@ class PerceptionContextBuilderNode(Node):
 
         self.declare_parameter("vlm_backend", "ollama")
         self.declare_parameter("vlm_model", "qwen2.5vl:7b")
-        self.declare_parameter("vlm_mock_mode", False)
         self.declare_parameter("min_trigger_interval", 5.0)
         self.declare_parameter("image_topic", "/Tiago_Lite/Astra_rgb/image_color")
         self.declare_parameter("detection_topic", "/perception/detections")
@@ -40,16 +39,14 @@ class PerceptionContextBuilderNode(Node):
 
         vlm_backend = self.get_parameter("vlm_backend").value
         vlm_model = self.get_parameter("vlm_model").value
-        vlm_mock = self.get_parameter("vlm_mock_mode").value
         min_interval = self.get_parameter("min_trigger_interval").value
 
-        self.vlm = VLMClient(
-            backend=vlm_backend, model=vlm_model, mock_mode=vlm_mock
-        )
+        self.vlm = VLMClient(backend=vlm_backend, model=vlm_model)
         self.trigger = PerceptionTrigger(min_interval=min_interval)
         self.cv_bridge = CvBridge()
 
         self.latest_cv_image = None
+        self.latest_image_header = None
         self._latest_vlm_result: dict | None = None
         self._latest_vlm_time: float = 0.0
 
@@ -69,15 +66,17 @@ class PerceptionContextBuilderNode(Node):
         # publish
         self._pub_raw = self.create_publisher(String, context_raw_topic, 10)
         self._pub_summary = self.create_publisher(String, context_summary_topic, 10)
-        self._pub_snap_img = self.create_publisher(CompressedImage, snapshot_image_topic, 10)
+        self._pub_snap_img = self.create_publisher(Image, snapshot_image_topic, 10)
         self._pub_snap_info = self.create_publisher(String, snapshot_info_topic, 10)
 
-        mode_str = "mock" if vlm_mock else f"{vlm_backend}/{vlm_model}"
-        self.get_logger().info(f"PerceptionContextBuilder 시작 (VLM={mode_str})")
+        self.get_logger().info(
+            f"PerceptionContextBuilder 시작 (VLM={vlm_backend}/{vlm_model})"
+        )
 
     def _on_image(self, msg: Image):
         try:
             self.latest_cv_image = self.cv_bridge.imgmsg_to_cv2(msg, "bgr8")
+            self.latest_image_header = msg.header
         except Exception:
             pass
 
@@ -134,13 +133,10 @@ class PerceptionContextBuilderNode(Node):
             self.get_logger().warn("Snapshot 요청이지만 이미지 없음")
             return
 
-        # JPEG 압축 publish
-        _, buf = cv2.imencode(
-            ".jpg", self.latest_cv_image, [cv2.IMWRITE_JPEG_QUALITY, 85]
-        )
-        snap_msg = CompressedImage()
-        snap_msg.format = "jpeg"
-        snap_msg.data = buf.tobytes()
+        # 최신 RGB 프레임을 원본 Image 메시지로 publish
+        snap_msg = self.cv_bridge.cv2_to_imgmsg(self.latest_cv_image, encoding="bgr8")
+        if self.latest_image_header is not None:
+            snap_msg.header = self.latest_image_header
         self._pub_snap_img.publish(snap_msg)
 
         # 스냅샷 정보 publish

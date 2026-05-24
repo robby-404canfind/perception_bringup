@@ -11,7 +11,6 @@ perception_context_builder:
   ros__parameters:
     vlm_backend: "ollama"
     vlm_model: "qwen2.5vl:7b"
-    vlm_mock_mode: false
     min_trigger_interval: 5.0
     image_topic: "/Tiago_Lite/Astra_rgb/image_color"
     detection_topic: "/perception/detections"

@@ -1,7 +1,7 @@
 """perception_trigger.py — 조건부 VLM 호출 Trigger 로직.
 
 YOLO 탐지 결과를 평가하여 VLM을 호출해야 하는지 결정합니다.
-4가지 조건: ACTION_REQUEST, PROXIMITY, NEW_OBJECT, PERIODIC.
+현재 구현된 조건은 ACTION_REQUEST, PROXIMITY, NEW_OBJECT입니다.
 """
 
 import time

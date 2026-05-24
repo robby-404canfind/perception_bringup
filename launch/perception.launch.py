@@ -8,8 +8,6 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
@@ -19,11 +17,6 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            DeclareLaunchArgument(
-                "vlm_mock_mode",
-                default_value="false",
-                description="VLM mock 모드 (true면 VLM 미호출)",
-            ),
             # YOLO Detector 노드
             Node(
                 package="perception_bringup",
@@ -37,10 +30,7 @@ def generate_launch_description():
                 package="perception_bringup",
                 executable="perception_context_builder",
                 name="perception_context_builder",
-                parameters=[
-                    config_file,
-                    {"vlm_mock_mode": LaunchConfiguration("vlm_mock_mode")},
-                ],
+                parameters=[config_file],
                 output="screen",
             ),
         ]
