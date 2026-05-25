@@ -11,6 +11,7 @@ import threading
 class PerceptionCache:
 
     def __init__(self, frame_w: int = 640, frame_h: int = 480):
+        # Action 루프와 detection callback이 같은 cache를 공유합니다.
         self._lock = threading.RLock()
         self._targets: list = []
         self._frame_w = frame_w

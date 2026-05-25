@@ -37,7 +37,7 @@ def exec_find(
     node.get_logger().info(f"find 시작: target={target_class}, timeout={timeout_sec}s")
     phase_start = _time.time()
 
-    # Phase 1: 현재 시야에서 즉시 탐색
+    # Phase 1: 현재 시야에서 즉시 탐색합니다.
     if feedback_cb:
         feedback_cb({
             "state": "phase1_direct",
@@ -52,7 +52,7 @@ def exec_find(
         )
         return {"success": True, "found_object": match, "search_method": "direct"}
 
-    # Phase 2: 로봇 회전 탐색 (scan 기반)
+    # Phase 2: scan을 재사용하되 목표 class를 찾으면 즉시 멈춥니다.
     node.get_logger().info(f"find Phase 2: 회전 탐색 시작 ({sweep_deg}°)")
     if feedback_cb:
         feedback_cb({

@@ -29,6 +29,7 @@ class YoloDetectorNode(Node):
     def __init__(self):
         super().__init__("yolo_detector")
 
+        # 뒤쪽 노드는 /perception/detections JSON schema를 기준으로 동작합니다.
         self.declare_parameter("model", "yolo26n.pt")
         self.declare_parameter("threshold", 0.5)
         self.declare_parameter("device", "cuda:0")
@@ -49,6 +50,7 @@ class YoloDetectorNode(Node):
         self.latest_depth = None
         self.latest_cv_image = None
 
+        # 센서 토픽은 오래된 프레임보다 최신 프레임이 중요합니다.
         image_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST,
@@ -84,6 +86,7 @@ class YoloDetectorNode(Node):
         return model_path
 
     def _image_cb(self, msg: Image):
+        # RGB frame마다 tracking 결과와 depth range를 묶어 publish합니다.
         cv_image = self.cv_bridge.imgmsg_to_cv2(msg, "bgr8")
         self.latest_cv_image = cv_image
 

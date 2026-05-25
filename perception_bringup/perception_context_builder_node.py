@@ -36,6 +36,7 @@ class PerceptionContextBuilderNode(Node):
     def __init__(self):
         super().__init__("perception_context_builder")
 
+        # detector 결과에 VLM 판단과 debug 출력을 붙여 context로 정규화합니다.
         self.declare_parameter("vlm_backend", "ollama")
         self.declare_parameter("vlm_model", "qwen2.5vl:7b")
         self.declare_parameter("min_trigger_interval", 5.0)
@@ -61,6 +62,7 @@ class PerceptionContextBuilderNode(Node):
         self.trigger = PerceptionTrigger(min_interval=min_interval)
         self.cv_bridge = CvBridge()
 
+        # snapshot/VLM 호출은 callback들이 갱신한 최신 상태를 사용합니다.
         self.latest_cv_image = None
         self.latest_raw_image = None
         self.latest_image_header = None
@@ -134,6 +136,7 @@ class PerceptionContextBuilderNode(Node):
             )
 
     def _on_detections(self, msg: String):
+        # Detection frame마다 context와 debug image를 갱신합니다.
         try:
             data = json.loads(msg.data)
         except json.JSONDecodeError:
@@ -187,6 +190,7 @@ class PerceptionContextBuilderNode(Node):
         )
 
     def _on_snapshot_req(self, msg: String):
+        # Snapshot은 stream이 아니라 요청 기반 단발성 출력입니다.
         if self.latest_cv_image is None:
             self.get_logger().warn("Snapshot 요청이지만 이미지 없음")
             return

@@ -25,6 +25,7 @@ class FindNode(Node):
     def __init__(self):
         super().__init__("find_node")
 
+        # Action wrapper: find 판단은 exec_find()에 둡니다.
         self.callback_group = ReentrantCallbackGroup()
         self.perception_cache = PerceptionCache()
         self.create_subscription(

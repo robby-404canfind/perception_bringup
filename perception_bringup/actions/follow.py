@@ -36,6 +36,7 @@ def exec_follow(
     Returns:
         dict: {"success": bool, "final_state": str, "elapsed_sec": float}
     """
+    # target id를 유지하며 cmd_vel을 publish하는 짧은 P 제어 루프입니다.
     last_seen = time.time()
     start = time.time()
     last_fb_time = 0.0
@@ -84,6 +85,7 @@ def exec_follow(
         frame_cx = snap["frame_w"] / 2
         error_x = target["center"]["x"] - frame_cx
         twist = Twist()
+        # 중앙 근처 bbox jitter는 회전 명령으로 만들지 않습니다.
         if abs(error_x) > yaw_deadband_px:
             twist.angular.z = _clamp(-k_yaw * error_x, -max_angular_z, max_angular_z)
 

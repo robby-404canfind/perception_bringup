@@ -45,6 +45,7 @@ def exec_scan(
             "scene_description": str|None,
         }
     """
+    # scan은 cmd_vel 회전 중 cache를 폴링하고, 처음 본 객체만 기록합니다.
     angular_speed = 0.3  # rad/s (~17 deg/s)
     poll_interval = 0.1  # 100ms
     feedback_interval = 1.0  # 1초 throttle
@@ -68,6 +69,7 @@ def exec_scan(
         snap = perception_cache.snapshot()
         for obj in snap["targets"]:
             if _matches(obj, filter_classes):
+                # class와 tracking id 조합으로 중복 snapshot을 막습니다.
                 key = _tracking_key(obj)
                 if key not in found_objects:
                     found_objects[key] = obj
@@ -95,6 +97,7 @@ def exec_scan(
                         break
 
         # Feedback 보고 (throttle)
+        # Action feedback은 1초 단위로 제한합니다.
         now = time.time()
         if feedback_cb and (now - last_fb_time) >= feedback_interval:
             class_summary = _class_count_summary(found_objects.values())

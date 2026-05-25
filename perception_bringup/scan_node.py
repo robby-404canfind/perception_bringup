@@ -25,6 +25,7 @@ class ScanNode(Node):
     def __init__(self):
         super().__init__("scan_node")
 
+        # Action wrapper: Goal/Feedback/Result 변환만 담당합니다.
         self.callback_group = ReentrantCallbackGroup()
         self.perception_cache = PerceptionCache()
         self.create_subscription(

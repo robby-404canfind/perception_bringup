@@ -23,6 +23,7 @@ class FollowNode(Node):
     def __init__(self):
         super().__init__("follow_node")
 
+        # Action wrapper: follow 제어는 exec_follow()에 둡니다.
         self.callback_group = ReentrantCallbackGroup()
         self.perception_cache = PerceptionCache()
         self.create_subscription(
