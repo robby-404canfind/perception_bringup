@@ -10,6 +10,7 @@ import json
 import time
 from threading import Thread
 
+import cv2
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
@@ -36,6 +37,9 @@ class PerceptionContextBuilderNode(Node):
         self.declare_parameter("snapshot_request_topic", "/perception/snapshot/request")
         self.declare_parameter("snapshot_image_topic", "/perception/snapshot/image")
         self.declare_parameter("snapshot_info_topic", "/perception/snapshot/info")
+        self.declare_parameter(
+            "system2_debug_image_topic", "/perception/system2/debug_image"
+        )
 
         vlm_backend = self.get_parameter("vlm_backend").value
         vlm_model = self.get_parameter("vlm_model").value
@@ -56,6 +60,9 @@ class PerceptionContextBuilderNode(Node):
         snapshot_request_topic = self.get_parameter("snapshot_request_topic").value
         snapshot_image_topic = self.get_parameter("snapshot_image_topic").value
         snapshot_info_topic = self.get_parameter("snapshot_info_topic").value
+        system2_debug_image_topic = self.get_parameter(
+            "system2_debug_image_topic"
+        ).value
 
         # 구독
         self.create_subscription(String, detection_topic, self._on_detections, 10)
@@ -68,6 +75,9 @@ class PerceptionContextBuilderNode(Node):
         self._pub_summary = self.create_publisher(String, context_summary_topic, 10)
         self._pub_snap_img = self.create_publisher(Image, snapshot_image_topic, 10)
         self._pub_snap_info = self.create_publisher(String, snapshot_info_topic, 10)
+        self._pub_debug_img = self.create_publisher(
+            Image, system2_debug_image_topic, 10
+        )
 
         self.get_logger().info(
             f"PerceptionContextBuilder 시작 (VLM={vlm_backend}/{vlm_model})"
@@ -119,6 +129,8 @@ class PerceptionContextBuilderNode(Node):
         summary = self._to_korean_summary(objects, vlm_scene)
         self._pub_summary.publish(String(data=summary))
 
+        self._publish_debug_image(objects, vlm_scene, vlm_age)
+
     def _call_vlm(self, cv_image: np.ndarray, reason: str):
         self.get_logger().info(f"VLM 호출: {reason}")
         result = self.vlm.describe_scene(cv_image)
@@ -152,6 +164,126 @@ class PerceptionContextBuilderNode(Node):
             "vlm_scene": self._latest_vlm_result or {},
         }
         self._pub_snap_info.publish(String(data=json.dumps(info, ensure_ascii=False)))
+
+    def _publish_debug_image(
+        self, objects: list, vlm_scene: dict, vlm_age: float | None
+    ) -> None:
+        if self.latest_cv_image is None:
+            return
+
+        debug_image = self._build_debug_image(
+            self.latest_cv_image,
+            objects,
+            vlm_scene,
+            vlm_age,
+        )
+        debug_msg = self.cv_bridge.cv2_to_imgmsg(debug_image, encoding="bgr8")
+        if self.latest_image_header is not None:
+            debug_msg.header = self.latest_image_header
+        self._pub_debug_img.publish(debug_msg)
+
+    def _build_debug_image(
+        self,
+        cv_image: np.ndarray,
+        objects: list,
+        vlm_scene: dict,
+        vlm_age: float | None,
+    ) -> np.ndarray:
+        debug_image = np.ascontiguousarray(cv_image.copy())
+        h, w = debug_image.shape[:2]
+
+        for obj in objects:
+            bbox = obj.get("bbox") or {}
+            x = int(bbox.get("x", 0))
+            y = int(bbox.get("y", 0))
+            bw = int(bbox.get("w", 0))
+            bh = int(bbox.get("h", 0))
+            if bw <= 0 or bh <= 0:
+                continue
+
+            x0 = max(0, min(w - 1, x))
+            y0 = max(0, min(h - 1, y))
+            x1 = max(0, min(w - 1, x + bw))
+            y1 = max(0, min(h - 1, y + bh))
+            if x1 <= x0 or y1 <= y0:
+                continue
+
+            cv2.rectangle(debug_image, (x0, y0), (x1, y1), (0, 220, 255), 2)
+            label = self._object_label(obj)
+            self._draw_text(debug_image, label, (x0, max(18, y0 - 6)), scale=0.5)
+
+        vlm_text = self._vlm_overlay_text(vlm_scene, vlm_age)
+        self._draw_text(debug_image, vlm_text, (8, 24), scale=0.55)
+        return debug_image
+
+    @staticmethod
+    def _object_label(obj: dict) -> str:
+        obj_id = obj.get("id", "?")
+        cls = obj.get("class", "unknown")
+        confidence = obj.get("confidence")
+        conf_text = (
+            f"{confidence:.2f}" if isinstance(confidence, (int, float)) else "?"
+        )
+        range_m = obj.get("range_m")
+        range_text = (
+            f"{range_m:.2f}m" if isinstance(range_m, (int, float)) else "range=?"
+        )
+        return f"id={obj_id} {cls} conf={conf_text} {range_text}"
+
+    @staticmethod
+    def _vlm_overlay_text(vlm_scene: dict, vlm_age: float | None) -> str:
+        age_text = f"{vlm_age:.1f}s" if isinstance(vlm_age, (int, float)) else "n/a"
+        if not vlm_scene:
+            return f"VLM age={age_text}: none"
+
+        scene_summary = " ".join(str(vlm_scene.get("scene_summary") or "").split())
+        if scene_summary and scene_summary.isascii():
+            scene_text = scene_summary
+        elif scene_summary:
+            scene_text = "scene_summary=available"
+        else:
+            scene_text = "scene_summary=empty"
+
+        social_hints = vlm_scene.get("social_hints") or []
+        hint_types = []
+        if isinstance(social_hints, list):
+            for hint in social_hints:
+                if isinstance(hint, dict) and hint.get("type"):
+                    hint_type = " ".join(str(hint["type"]).split())
+                    if hint_type.isascii():
+                        hint_types.append(hint_type)
+        hint_text = ",".join(hint_types[:2]) if hint_types else "none"
+        overlay = f"VLM age={age_text}: {scene_text}; hints={hint_text}"
+        return overlay if len(overlay) <= 88 else overlay[:85] + "..."
+
+    @staticmethod
+    def _draw_text(
+        image: np.ndarray,
+        text: str,
+        origin: tuple[int, int],
+        scale: float = 0.5,
+    ) -> None:
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        thickness = 1
+        text = text if text.isascii() else text.encode("ascii", "ignore").decode()
+        x, y = origin
+        (tw, th), baseline = cv2.getTextSize(text, font, scale, thickness)
+        h, w = image.shape[:2]
+        x = max(0, min(w - tw - 6, x))
+        y = max(th + 4, min(h - baseline - 4, y))
+        top_left = (max(0, x - 3), max(0, y - th - 5))
+        bottom_right = (min(w - 1, x + tw + 3), min(h - 1, y + baseline + 3))
+        cv2.rectangle(image, top_left, bottom_right, (0, 0, 0), -1)
+        cv2.putText(
+            image,
+            text,
+            (x, y),
+            font,
+            scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA,
+        )
 
     @staticmethod
     def _to_korean_summary(objects: list, vlm_scene: dict) -> str:

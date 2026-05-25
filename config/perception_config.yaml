@@ -19,3 +19,4 @@ perception_context_builder:
     snapshot_request_topic: "/perception/snapshot/request"
     snapshot_image_topic: "/perception/snapshot/image"
     snapshot_info_topic: "/perception/snapshot/info"
+    system2_debug_image_topic: "/perception/system2/debug_image"
