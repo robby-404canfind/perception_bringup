@@ -16,6 +16,13 @@ import cv2
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
+try:
+    from PIL import Image as PILImage
+    from PIL import ImageDraw, ImageFont
+except ImportError:
+    PILImage = None
+    ImageDraw = None
+    ImageFont = None
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
@@ -44,6 +51,7 @@ class PerceptionContextBuilderNode(Node):
         self.declare_parameter(
             "system2_debug_image_topic", "/perception/system2/debug_image"
         )
+        self.declare_parameter("system2_debug_font_path", "")
 
         vlm_backend = self.get_parameter("vlm_backend").value
         vlm_model = self.get_parameter("vlm_model").value
@@ -64,6 +72,14 @@ class PerceptionContextBuilderNode(Node):
         self._latest_frame_h = 0
         self._latest_image_w = 0
         self._latest_image_h = 0
+        self._system2_debug_font = self._load_debug_font(
+            str(self.get_parameter("system2_debug_font_path").value or "")
+        )
+        if self._system2_debug_font is None:
+            self.get_logger().warn(
+                "System2 debug image 한글 폰트를 찾지 못했습니다. "
+                "fonts-noto-cjk와 python3-pil 설치를 확인하세요."
+            )
 
         detection_topic = self.get_parameter("detection_topic").value
         context_raw_topic = self.get_parameter("context_raw_topic").value
@@ -352,8 +368,7 @@ class PerceptionContextBuilderNode(Node):
             label = self._object_label(obj)
             self._draw_text(debug_image, label, (x0, max(18, y0 - 6)), scale=0.5)
 
-        vlm_text = self._vlm_overlay_text(vlm_scene, vlm_age)
-        self._draw_text(debug_image, vlm_text, (8, 24), scale=0.55)
+        self._draw_vlm_overlay(debug_image, vlm_scene, vlm_age)
         return debug_image
 
     @staticmethod
@@ -371,30 +386,60 @@ class PerceptionContextBuilderNode(Node):
         return f"id={obj_id} {cls} conf={conf_text} {range_text}"
 
     @staticmethod
-    def _vlm_overlay_text(vlm_scene: dict, vlm_age: float | None) -> str:
+    def _vlm_overlay_lines(
+        vlm_scene: dict,
+        vlm_age: float | None,
+    ) -> tuple[str, str]:
         age_text = f"{vlm_age:.1f}s" if isinstance(vlm_age, (int, float)) else "n/a"
-        if not vlm_scene:
-            return f"VLM age={age_text}: none"
-
+        hints_text = PerceptionContextBuilderNode._social_hints_overlay_text(
+            vlm_scene.get("social_hints") if isinstance(vlm_scene, dict) else None
+        )
         scene_summary = " ".join(str(vlm_scene.get("scene_summary") or "").split())
-        if scene_summary and scene_summary.isascii():
-            scene_text = scene_summary
-        elif scene_summary:
-            scene_text = "scene_summary=available"
-        else:
-            scene_text = "scene_summary=empty"
+        summary_text = scene_summary or "VLM 요약 없음"
+        return f"VLM age={age_text} social_hints={hints_text}", summary_text
 
-        social_hints = vlm_scene.get("social_hints") or []
+    @staticmethod
+    def _social_hints_overlay_text(social_hints) -> str:
+        if not isinstance(social_hints, list):
+            return "none"
+
         hint_types = []
-        if isinstance(social_hints, list):
-            for hint in social_hints:
-                if isinstance(hint, dict) and hint.get("type"):
-                    hint_type = " ".join(str(hint["type"]).split())
-                    if hint_type.isascii():
-                        hint_types.append(hint_type)
-        hint_text = ",".join(hint_types[:2]) if hint_types else "none"
-        overlay = f"VLM age={age_text}: {scene_text}; hints={hint_text}"
-        return overlay if len(overlay) <= 88 else overlay[:85] + "..."
+        for hint in social_hints:
+            if not isinstance(hint, dict) or not hint.get("type"):
+                continue
+            hint_type = " ".join(str(hint["type"]).split())
+            if hint_type:
+                hint_types.append(hint_type)
+
+        if not hint_types:
+            return "none"
+        return ",".join(hint_types[:3])
+
+    def _draw_vlm_overlay(
+        self,
+        image: np.ndarray,
+        vlm_scene: dict,
+        vlm_age: float | None,
+    ) -> None:
+        lines = self._vlm_overlay_lines(vlm_scene, vlm_age)
+        if self._system2_debug_font is not None and PILImage is not None:
+            self._draw_unicode_overlay(image, lines, self._system2_debug_font)
+            return
+
+        self._draw_text(
+            image,
+            lines[0],
+            (8, 24),
+            scale=0.55,
+            bg_color=(0, 0, 220),
+        )
+        self._draw_text(
+            image,
+            lines[1],
+            (8, 48),
+            scale=0.55,
+            bg_color=(0, 0, 220),
+        )
 
     @staticmethod
     def _image_for_png(image: np.ndarray, encoding: str) -> np.ndarray:
@@ -414,6 +459,8 @@ class PerceptionContextBuilderNode(Node):
         text: str,
         origin: tuple[int, int],
         scale: float = 0.5,
+        bg_color: tuple[int, int, int] = (0, 0, 0),
+        text_color: tuple[int, int, int] = (255, 255, 255),
     ) -> None:
         font = cv2.FONT_HERSHEY_SIMPLEX
         thickness = 1
@@ -425,17 +472,113 @@ class PerceptionContextBuilderNode(Node):
         y = max(th + 4, min(h - baseline - 4, y))
         top_left = (max(0, x - 3), max(0, y - th - 5))
         bottom_right = (min(w - 1, x + tw + 3), min(h - 1, y + baseline + 3))
-        cv2.rectangle(image, top_left, bottom_right, (0, 0, 0), -1)
+        cv2.rectangle(image, top_left, bottom_right, bg_color, -1)
         cv2.putText(
             image,
             text,
             (x, y),
             font,
             scale,
-            (255, 255, 255),
+            text_color,
             thickness,
             cv2.LINE_AA,
         )
+
+    @staticmethod
+    def _load_debug_font(font_path: str, size: int = 18):
+        if ImageFont is None:
+            return None
+
+        candidates = []
+        if font_path:
+            candidates.append(Path(font_path).expanduser())
+        candidates.extend(
+            [
+                Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+                Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+                Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+                Path("/usr/share/fonts/truetype/nanum/NanumGothic.ttf"),
+            ]
+        )
+
+        for candidate in candidates:
+            if candidate.exists():
+                try:
+                    return ImageFont.truetype(str(candidate), size=size)
+                except OSError:
+                    continue
+        return None
+
+    @staticmethod
+    def _draw_unicode_overlay(
+        image: np.ndarray,
+        lines: tuple[str, str],
+        font,
+    ) -> None:
+        h, w = image.shape[:2]
+        max_text_width = max(80, w - 28)
+
+        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        pil_image = PILImage.fromarray(rgb)
+        draw = ImageDraw.Draw(pil_image)
+        fitted_lines = [
+            PerceptionContextBuilderNode._fit_text_to_width(
+                draw,
+                line,
+                font,
+                max_text_width,
+            )
+            for line in lines
+        ]
+
+        line_boxes = [
+            draw.textbbox((0, 0), line, font=font)
+            for line in fitted_lines
+        ]
+        line_widths = [box[2] - box[0] for box in line_boxes]
+        line_heights = [box[3] - box[1] for box in line_boxes]
+        pad_x = 7
+        pad_y = 5
+        line_gap = 4
+        x = 8
+        y = 8
+        rect_w = min(w - x - 1, max(line_widths) + pad_x * 2)
+        rect_h = min(h - y - 1, sum(line_heights) + line_gap + pad_y * 2)
+
+        draw.rectangle(
+            (x, y, x + rect_w, y + rect_h),
+            fill=(210, 0, 0),
+        )
+        cursor_y = y + pad_y
+        for line, box, line_h in zip(fitted_lines, line_boxes, line_heights):
+            text_y = cursor_y - box[1]
+            draw.text(
+                (x + pad_x, text_y),
+                line,
+                font=font,
+                fill=(255, 255, 255),
+            )
+            cursor_y += line_h + line_gap
+
+        image[:] = cv2.cvtColor(np.asarray(pil_image), cv2.COLOR_RGB2BGR)
+
+    @staticmethod
+    def _fit_text_to_width(draw, text: str, font, max_width: int) -> str:
+        if draw.textlength(text, font=font) <= max_width:
+            return text
+
+        suffix = "..."
+        suffix_width = draw.textlength(suffix, font=font)
+        target_width = max(0, max_width - suffix_width)
+        lo = 0
+        hi = len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if draw.textlength(text[:mid], font=font) <= target_width:
+                lo = mid
+            else:
+                hi = mid - 1
+        return text[:lo].rstrip() + suffix
 
     @staticmethod
     def _resolve_snapshot_save_dir(path_value: str) -> Path:

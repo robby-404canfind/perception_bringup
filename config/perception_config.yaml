@@ -22,3 +22,4 @@ perception_context_builder:
     save_snapshots: true
     snapshot_save_dir: "snapshots"
     system2_debug_image_topic: "/perception/system2/debug_image"
+    system2_debug_font_path: ""
