@@ -5,7 +5,9 @@ depth 카메라에서 range_m을 추정하여 /perception/detections에 JSON으�
 """
 
 import json
+import os
 
+from ament_index_python.packages import get_package_share_directory
 import cv2
 import numpy as np
 import rclpy
@@ -37,6 +39,7 @@ class YoloDetectorNode(Node):
         model_path = self.get_parameter("model").value
         self.threshold = self.get_parameter("threshold").value
         device = self.get_parameter("device").value
+        model_path = self._resolve_model_path(model_path)
 
         self.yolo = YOLO(model_path)
         if device != "cpu":
@@ -65,6 +68,20 @@ class YoloDetectorNode(Node):
             f"YoloDetector 시작 (model={model_path}, device={device}, "
             f"thr={self.threshold}, image={image_topic})"
         )
+
+    @staticmethod
+    def _resolve_model_path(model_path: str) -> str:
+        if os.path.isabs(model_path) or os.path.exists(model_path):
+            return model_path
+
+        share_path = os.path.join(
+            get_package_share_directory("perception_bringup"),
+            model_path,
+        )
+        if os.path.exists(share_path):
+            return share_path
+
+        return model_path
 
     def _image_cb(self, msg: Image):
         cv_image = self.cv_bridge.imgmsg_to_cv2(msg, "bgr8")

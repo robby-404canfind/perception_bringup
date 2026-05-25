@@ -9,6 +9,8 @@ import json
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.action import ActionServer
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String
 
@@ -23,11 +25,13 @@ class ScanNode(Node):
     def __init__(self):
         super().__init__("scan_node")
 
+        self.callback_group = ReentrantCallbackGroup()
         self.perception_cache = PerceptionCache()
         self.create_subscription(
             String, "/perception/detections",
             lambda msg: self.perception_cache.update_from_msg(msg.data, self.get_logger()),
             10,
+            callback_group=self.callback_group,
         )
 
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
@@ -36,7 +40,11 @@ class ScanNode(Node):
         )
 
         self._action_server = ActionServer(
-            self, Scan, "/system1/scan", self._execute_cb
+            self,
+            Scan,
+            "/system1/scan",
+            self._execute_cb,
+            callback_group=self.callback_group,
         )
         self.get_logger().info("ScanNode ActionServer 시작: /system1/scan")
 
@@ -55,7 +63,7 @@ class ScanNode(Node):
             msg.objects_found = int(fb.get("objects_found", 0))
             goal_handle.publish_feedback(msg)
 
-        # exec_scan 실행 (현재 스레드에서 blocking)
+        # exec_scan 자체는 blocking이지만, MultiThreadedExecutor가 detection 구독을 계속 처리합니다.
         result_data = exec_scan(
             node=self,
             perception_cache=self.perception_cache,
@@ -85,11 +93,14 @@ class ScanNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ScanNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.try_shutdown()
 

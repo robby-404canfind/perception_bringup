@@ -78,6 +78,7 @@ def exec_find(
         watch_classes=[target_class],
         snapshot_pub=snapshot_pub,
         feedback_cb=_scan_feedback_forwarder,
+        stop_on_first=True,
     )
 
     if scan_result["success"] and scan_result["objects_found"]:

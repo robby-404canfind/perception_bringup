@@ -38,6 +38,7 @@ def exec_follow(
     start = time.time()
     last_fb_time = 0.0
     feedback_interval = 1.0  # 1초 throttle
+    ever_seen = False
 
     node.get_logger().info(
         f"follow 시작: target_class={target_class}, target_id={target_id}, "
@@ -71,6 +72,7 @@ def exec_follow(
             continue
 
         last_seen = time.time()
+        ever_seen = True
         # 첫 발견 시 target_id 고정
         if target_id < 0 and target.get("id", -1) >= 0:
             target_id = target["id"]
@@ -107,12 +109,14 @@ def exec_follow(
 
         time.sleep(0.05)
 
-    # 정지
-    cmd_pub.publish(Twist())
+    # 정지 명령은 BestEffort 구독에서 유실될 수 있으므로 짧게 반복 publish합니다.
+    _publish_stop(cmd_pub)
 
     elapsed = round(time.time() - start, 1)
-    if final_state == "timeout":
+    if final_state == "timeout" and ever_seen:
         final_state = "completed"
+    elif final_state == "timeout":
+        final_state = "lost_target"
 
     node.get_logger().info(f"follow 종료: {final_state}, {elapsed}s")
     return {
@@ -137,3 +141,10 @@ def _find_target(snap: dict, target_id: int, target_class: str) -> dict | None:
     if with_range:
         return min(with_range, key=lambda o: o["range_m"])
     return candidates[0]
+
+
+def _publish_stop(cmd_pub, repeat: int = 5, interval_sec: float = 0.02):
+    stop = Twist()
+    for _ in range(repeat):
+        cmd_pub.publish(stop)
+        time.sleep(interval_sec)

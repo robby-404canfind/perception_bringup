@@ -7,6 +7,8 @@ Feedback과 Result를 publish합니다.
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.action import ActionServer
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String
 
@@ -21,17 +23,23 @@ class FollowNode(Node):
     def __init__(self):
         super().__init__("follow_node")
 
+        self.callback_group = ReentrantCallbackGroup()
         self.perception_cache = PerceptionCache()
         self.create_subscription(
             String, "/perception/detections",
             lambda msg: self.perception_cache.update_from_msg(msg.data, self.get_logger()),
             10,
+            callback_group=self.callback_group,
         )
 
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
 
         self._action_server = ActionServer(
-            self, Follow, "/system1/follow", self._execute_cb
+            self,
+            Follow,
+            "/system1/follow",
+            self._execute_cb,
+            callback_group=self.callback_group,
         )
         self.get_logger().info("FollowNode ActionServer 시작: /system1/follow")
 
@@ -74,11 +82,14 @@ class FollowNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = FollowNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.try_shutdown()
 

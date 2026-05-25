@@ -9,6 +9,8 @@ import json
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.action import ActionServer
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String
 
@@ -23,11 +25,13 @@ class FindNode(Node):
     def __init__(self):
         super().__init__("find_node")
 
+        self.callback_group = ReentrantCallbackGroup()
         self.perception_cache = PerceptionCache()
         self.create_subscription(
             String, "/perception/detections",
             lambda msg: self.perception_cache.update_from_msg(msg.data, self.get_logger()),
             10,
+            callback_group=self.callback_group,
         )
 
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
@@ -36,7 +40,11 @@ class FindNode(Node):
         )
 
         self._action_server = ActionServer(
-            self, Find, "/system1/find", self._execute_cb
+            self,
+            Find,
+            "/system1/find",
+            self._execute_cb,
+            callback_group=self.callback_group,
         )
         self.get_logger().info("FindNode ActionServer 시작: /system1/find")
 
@@ -81,11 +89,14 @@ class FindNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = FindNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.try_shutdown()
 

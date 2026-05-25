@@ -22,6 +22,7 @@ def exec_scan(
     watch_ids: list | None = None,
     snapshot_pub=None,
     feedback_cb=None,
+    stop_on_first: bool = False,
     **kwargs,
 ) -> dict:
     """scan() 실행. 로봇 회전 sweep + detection 모니터링.
@@ -30,6 +31,8 @@ def exec_scan(
         feedback_cb: 진행 상태를 상위(ActionServer)에 보고하는 콜백.
             호출 시 dict: {"state", "detail", "elapsed_sec", "objects_found"}.
             1초 간격으로 throttle 적용.
+        stop_on_first: True이면 첫 매칭 객체를 찾은 뒤 scan을 즉시 종료합니다.
+            find()의 Phase 2에서 사용합니다.
 
     Returns:
         dict: {"success": bool, "objects_found": list, "scene_description": str|None}
@@ -51,6 +54,7 @@ def exec_scan(
     )
 
     while (time.time() - start) < duration_sec:
+        should_stop = False
         cmd_pub.publish(twist)
 
         snap = perception_cache.snapshot()
@@ -61,12 +65,15 @@ def exec_scan(
                     found_objects[key] = obj
                     node.get_logger().info(
                         f"FOUND: {obj.get('class')} id={obj.get('id')} "
-                        f"range={obj.get('range_m')}m"
+                        f"range={_format_range(obj.get('range_m'))}"
                     )
                     # Snapshot 요청
                     if snapshot_pub:
                         req = {"snapshot_id": key, "requester": "scan", "reason": "FOUND"}
                         snapshot_pub.publish(String(data=json.dumps(req)))
+                    if stop_on_first:
+                        should_stop = True
+                        break
 
         # Feedback 보고 (throttle)
         now = time.time()
@@ -79,11 +86,13 @@ def exec_scan(
             })
             last_fb_time = now
 
+        if should_stop:
+            break
+
         time.sleep(poll_interval)
 
-    # 정지
-    twist.angular.z = 0.0
-    cmd_pub.publish(twist)
+    # 정지 명령은 BestEffort 구독에서 유실될 수 있으므로 짧게 반복 publish합니다.
+    _publish_stop(cmd_pub)
 
     # VLM 장면 요약 (선택)
     if vlm_client and hasattr(node, "latest_cv_image") and node.latest_cv_image is not None:
@@ -112,3 +121,14 @@ def _matches(obj: dict, watch_classes: list | None, watch_ids: list | None) -> b
     if not watch_classes and not watch_ids:
         return True  # 필터 없으면 모든 객체 매칭
     return False
+
+
+def _format_range(range_m) -> str:
+    return f"{range_m}m" if range_m is not None else "unknown"
+
+
+def _publish_stop(cmd_pub, repeat: int = 5, interval_sec: float = 0.02):
+    stop = Twist()
+    for _ in range(repeat):
+        cmd_pub.publish(stop)
+        time.sleep(interval_sec)
