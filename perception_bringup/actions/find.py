@@ -20,6 +20,8 @@ def exec_find(
     sweep_deg: float = 360.0,
     snapshot_pub=None,
     feedback_cb=None,
+    mission_id: str = "",
+    request_id: str = "",
     **kwargs,
 ) -> dict:
     """find() 실행. known class local find.
@@ -79,6 +81,8 @@ def exec_find(
         snapshot_pub=snapshot_pub,
         feedback_cb=_scan_feedback_forwarder,
         stop_on_first=True,
+        mission_id=mission_id,
+        request_id=request_id,
     )
 
     if scan_result["success"] and scan_result["objects_found"]:

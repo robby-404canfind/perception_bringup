@@ -24,6 +24,8 @@ def exec_scan(
     snapshot_pub=None,
     feedback_cb=None,
     stop_on_first: bool = False,
+    mission_id: str = "",
+    request_id: str = "",
     **kwargs,
 ) -> dict:
     """scan() 실행. 로봇 회전 sweep + detection 모니터링.
@@ -46,7 +48,7 @@ def exec_scan(
     angular_speed = 0.3  # rad/s (~17 deg/s)
     poll_interval = 0.1  # 100ms
     feedback_interval = 1.0  # 1초 throttle
-    found_objects: dict = {}  # key: "class_id" → 중복 방지
+    found_objects: dict = {}  # key: "class:tracking_id" -> 중복 snapshot 방지
     scene_desc = None
 
     twist = Twist()
@@ -66,7 +68,7 @@ def exec_scan(
         snap = perception_cache.snapshot()
         for obj in snap["targets"]:
             if _matches(obj, filter_classes):
-                key = f"{obj.get('class', '?')}_{obj.get('id', '?')}"
+                key = _tracking_key(obj)
                 if key not in found_objects:
                     found_objects[key] = obj
                     node.get_logger().info(
@@ -78,8 +80,14 @@ def exec_scan(
                     if snapshot_pub:
                         req = {
                             "snapshot_id": key,
+                            "mission_id": mission_id,
+                            "request_id": request_id,
                             "requester": "scan",
                             "reason": "FOUND",
+                            "message": (
+                                f"{obj.get('class', 'object')} "
+                                f"id={obj.get('id', '?')} found during scan"
+                            ),
                         }
                         snapshot_pub.publish(String(data=json.dumps(req)))
                     if stop_on_first:
@@ -139,6 +147,13 @@ def _matches(obj: dict, filter_classes: list | None) -> bool:
     if not filter_classes:
         return True  # 필터 없으면 모든 객체 매칭
     return False
+
+
+def _tracking_key(obj: dict) -> str:
+    obj_id = obj.get("id")
+    if obj_id is None:
+        obj_id = "none"
+    return f"{obj.get('class', 'unknown')}:{obj_id}"
 
 
 def _format_range(range_m) -> str:

@@ -8,6 +8,8 @@ VLM Trigger 조건이 충족되면 최신 RGB 프레임으로 VLM을 호출합�
 
 import json
 import time
+from copy import deepcopy
+from pathlib import Path
 from threading import Thread
 
 import cv2
@@ -37,6 +39,8 @@ class PerceptionContextBuilderNode(Node):
         self.declare_parameter("snapshot_request_topic", "/perception/snapshot/request")
         self.declare_parameter("snapshot_image_topic", "/perception/snapshot/image")
         self.declare_parameter("snapshot_info_topic", "/perception/snapshot/info")
+        self.declare_parameter("save_snapshots", True)
+        self.declare_parameter("snapshot_save_dir", "snapshots")
         self.declare_parameter(
             "system2_debug_image_topic", "/perception/system2/debug_image"
         )
@@ -50,9 +54,16 @@ class PerceptionContextBuilderNode(Node):
         self.cv_bridge = CvBridge()
 
         self.latest_cv_image = None
+        self.latest_raw_image = None
         self.latest_image_header = None
+        self.latest_image_encoding = "bgr8"
         self._latest_vlm_result: dict | None = None
         self._latest_vlm_time: float = 0.0
+        self._latest_objects: list = []
+        self._latest_frame_w = 0
+        self._latest_frame_h = 0
+        self._latest_image_w = 0
+        self._latest_image_h = 0
 
         detection_topic = self.get_parameter("detection_topic").value
         context_raw_topic = self.get_parameter("context_raw_topic").value
@@ -60,6 +71,10 @@ class PerceptionContextBuilderNode(Node):
         snapshot_request_topic = self.get_parameter("snapshot_request_topic").value
         snapshot_image_topic = self.get_parameter("snapshot_image_topic").value
         snapshot_info_topic = self.get_parameter("snapshot_info_topic").value
+        self.save_snapshots = bool(self.get_parameter("save_snapshots").value)
+        self.snapshot_save_dir = self._resolve_snapshot_save_dir(
+            str(self.get_parameter("snapshot_save_dir").value)
+        )
         system2_debug_image_topic = self.get_parameter(
             "system2_debug_image_topic"
         ).value
@@ -82,13 +97,25 @@ class PerceptionContextBuilderNode(Node):
         self.get_logger().info(
             f"PerceptionContextBuilder 시작 (VLM={vlm_backend}/{vlm_model})"
         )
+        if self.save_snapshots:
+            self.get_logger().info(f"Snapshot 저장 경로: {self.snapshot_save_dir}")
 
     def _on_image(self, msg: Image):
         try:
-            self.latest_cv_image = self.cv_bridge.imgmsg_to_cv2(msg, "bgr8")
+            self.latest_raw_image = np.ascontiguousarray(
+                self.cv_bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough").copy()
+            )
+            self.latest_cv_image = np.ascontiguousarray(
+                self.cv_bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8").copy()
+            )
             self.latest_image_header = msg.header
-        except Exception:
-            pass
+            self.latest_image_encoding = msg.encoding or "passthrough"
+            self._latest_image_w = int(msg.width)
+            self._latest_image_h = int(msg.height)
+        except Exception as e:
+            self.get_logger().warn(
+                f"RGB 이미지 변환 실패: {e}", throttle_duration_sec=5.0
+            )
 
     def _on_detections(self, msg: String):
         try:
@@ -97,6 +124,9 @@ class PerceptionContextBuilderNode(Node):
             return
 
         objects = data.get("objects", [])
+        self._latest_objects = deepcopy(objects)
+        self._latest_frame_w = int(data.get("frame_w", 0) or 0)
+        self._latest_frame_h = int(data.get("frame_h", 0) or 0)
 
         # VLM Trigger 평가
         trigger_reason = self.trigger.evaluate(objects)
@@ -145,25 +175,129 @@ class PerceptionContextBuilderNode(Node):
             self.get_logger().warn("Snapshot 요청이지만 이미지 없음")
             return
 
-        # 최신 RGB 프레임을 원본 Image 메시지로 publish
-        snap_msg = self.cv_bridge.cv2_to_imgmsg(self.latest_cv_image, encoding="bgr8")
-        if self.latest_image_header is not None:
-            snap_msg.header = self.latest_image_header
-        self._pub_snap_img.publish(snap_msg)
-
-        # 스냅샷 정보 publish
         try:
             req_data = json.loads(msg.data) if msg.data else {}
         except json.JSONDecodeError:
             req_data = {}
 
+        raw_source = (
+            self.latest_raw_image
+            if self.latest_raw_image is not None
+            else self.latest_cv_image
+        )
+        raw_image = np.ascontiguousarray(raw_source.copy())
+        debug_source_image = np.ascontiguousarray(self.latest_cv_image.copy())
+        image_encoding = self.latest_image_encoding or "passthrough"
+        image_h, image_w = raw_image.shape[:2]
+        objects = deepcopy(self._latest_objects)
+        vlm_scene = deepcopy(self._latest_vlm_result or {})
+        vlm_age = (
+            round(time.time() - self._latest_vlm_time, 1)
+            if self._latest_vlm_result
+            else None
+        )
+
+        # 기존 topic 호환성을 위해 snapshot publish는 bgr8 Image로 유지합니다.
+        snap_msg = self.cv_bridge.cv2_to_imgmsg(debug_source_image, encoding="bgr8")
+        if self.latest_image_header is not None:
+            snap_msg.header = self.latest_image_header
+        self._pub_snap_img.publish(snap_msg)
+
+        # 스냅샷 정보 publish
         info = {
             "snapshot_id": req_data.get("snapshot_id", ""),
+            "mission_id": req_data.get("mission_id", ""),
+            "request_id": req_data.get("request_id", ""),
             "requester": req_data.get("requester", ""),
             "reason": req_data.get("reason", ""),
-            "vlm_scene": self._latest_vlm_result or {},
+            "message": req_data.get("message", ""),
+            "objects": objects,
+            "vlm_scene": vlm_scene,
+            "save_snapshots": self.save_snapshots,
+            "image_encoding": image_encoding,
+            "image_w": image_w,
+            "image_h": image_h,
         }
+        if self.save_snapshots:
+            save_paths = self._snapshot_file_paths(info["snapshot_id"])
+            info["saved_files"] = {
+                "raw": str(save_paths["raw"]),
+                "debug": str(save_paths["debug"]),
+                "metadata": str(save_paths["metadata"]),
+            }
+            detection_frame_w = self._latest_frame_w or image_w
+            detection_frame_h = self._latest_frame_h or image_h
+            Thread(
+                target=self._save_snapshot_files,
+                args=(
+                    raw_image,
+                    image_encoding,
+                    debug_source_image,
+                    objects,
+                    vlm_scene,
+                    vlm_age,
+                    image_w,
+                    image_h,
+                    detection_frame_w,
+                    detection_frame_h,
+                    deepcopy(info),
+                    save_paths,
+                ),
+                daemon=True,
+            ).start()
+
         self._pub_snap_info.publish(String(data=json.dumps(info, ensure_ascii=False)))
+
+    def _save_snapshot_files(
+        self,
+        raw_image: np.ndarray,
+        image_encoding: str,
+        debug_source_image: np.ndarray,
+        objects: list,
+        vlm_scene: dict,
+        vlm_age: float | None,
+        image_w: int,
+        image_h: int,
+        detection_frame_w: int,
+        detection_frame_h: int,
+        metadata: dict,
+        save_paths: dict,
+    ) -> None:
+        try:
+            self.snapshot_save_dir.mkdir(parents=True, exist_ok=True)
+            debug_image = self._build_debug_image(
+                debug_source_image,
+                objects,
+                vlm_scene,
+                vlm_age,
+                source_frame_w=detection_frame_w,
+                source_frame_h=detection_frame_h,
+            )
+
+            raw_png_image = self._image_for_png(raw_image, image_encoding)
+            raw_ok = cv2.imwrite(str(save_paths["raw"]), raw_png_image)
+            debug_ok = cv2.imwrite(str(save_paths["debug"]), debug_image)
+            if not raw_ok or not debug_ok:
+                raise RuntimeError("cv2.imwrite returned False")
+
+            metadata.update(
+                {
+                    "timestamp": save_paths["timestamp"],
+                    "saved_at_unix_sec": time.time(),
+                    "frame_w": image_w,
+                    "frame_h": image_h,
+                    "detection_frame_w": detection_frame_w,
+                    "detection_frame_h": detection_frame_h,
+                    "image_encoding": image_encoding,
+                    "vlm_age_sec": vlm_age,
+                }
+            )
+            with save_paths["metadata"].open("w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+            self.get_logger().info(f"Snapshot 파일 저장: {save_paths['metadata']}")
+        except Exception as e:
+            self.get_logger().warn(f"Snapshot 파일 저장 실패: {e}")
 
     def _publish_debug_image(
         self, objects: list, vlm_scene: dict, vlm_age: float | None
@@ -176,6 +310,8 @@ class PerceptionContextBuilderNode(Node):
             objects,
             vlm_scene,
             vlm_age,
+            source_frame_w=self._latest_frame_w or self._latest_image_w,
+            source_frame_h=self._latest_frame_h or self._latest_image_h,
         )
         debug_msg = self.cv_bridge.cv2_to_imgmsg(debug_image, encoding="bgr8")
         if self.latest_image_header is not None:
@@ -188,16 +324,20 @@ class PerceptionContextBuilderNode(Node):
         objects: list,
         vlm_scene: dict,
         vlm_age: float | None,
+        source_frame_w: int | None = None,
+        source_frame_h: int | None = None,
     ) -> np.ndarray:
         debug_image = np.ascontiguousarray(cv_image.copy())
         h, w = debug_image.shape[:2]
+        scale_x = w / source_frame_w if source_frame_w else 1.0
+        scale_y = h / source_frame_h if source_frame_h else 1.0
 
         for obj in objects:
             bbox = obj.get("bbox") or {}
-            x = int(bbox.get("x", 0))
-            y = int(bbox.get("y", 0))
-            bw = int(bbox.get("w", 0))
-            bh = int(bbox.get("h", 0))
+            x = int(round(float(bbox.get("x", 0)) * scale_x))
+            y = int(round(float(bbox.get("y", 0)) * scale_y))
+            bw = int(round(float(bbox.get("w", 0)) * scale_x))
+            bh = int(round(float(bbox.get("h", 0)) * scale_y))
             if bw <= 0 or bh <= 0:
                 continue
 
@@ -257,6 +397,18 @@ class PerceptionContextBuilderNode(Node):
         return overlay if len(overlay) <= 88 else overlay[:85] + "..."
 
     @staticmethod
+    def _image_for_png(image: np.ndarray, encoding: str) -> np.ndarray:
+        normalized = (encoding or "").lower()
+        if image.ndim < 3:
+            return image
+
+        if normalized in ("rgb8", "rgb16"):
+            return cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        if normalized in ("rgba8", "rgba16"):
+            return cv2.cvtColor(image, cv2.COLOR_RGBA2BGRA)
+        return image
+
+    @staticmethod
     def _draw_text(
         image: np.ndarray,
         text: str,
@@ -284,6 +436,40 @@ class PerceptionContextBuilderNode(Node):
             thickness,
             cv2.LINE_AA,
         )
+
+    @staticmethod
+    def _resolve_snapshot_save_dir(path_value: str) -> Path:
+        path = Path(path_value).expanduser()
+        if path.is_absolute():
+            return path
+        repo_root = Path(__file__).resolve().parents[1]
+        return repo_root / path
+
+    def _snapshot_file_paths(self, snapshot_id: str) -> dict:
+        timestamp = self._timestamp_for_filename()
+        safe_snapshot_id = self._safe_filename_part(snapshot_id or "snapshot")
+        base = f"{timestamp}_{safe_snapshot_id}"
+        return {
+            "timestamp": timestamp,
+            "raw": self.snapshot_save_dir / f"{base}_raw.png",
+            "debug": self.snapshot_save_dir / f"{base}_debug.png",
+            "metadata": self.snapshot_save_dir / f"{base}.json",
+        }
+
+    @staticmethod
+    def _timestamp_for_filename() -> str:
+        now = time.time()
+        base = time.strftime("%Y%m%d_%H%M%S", time.localtime(now))
+        millis = int((now % 1.0) * 1000)
+        return f"{base}_{millis:03d}"
+
+    @staticmethod
+    def _safe_filename_part(value: str) -> str:
+        cleaned = "".join(
+            ch if ch.isascii() and (ch.isalnum() or ch in ("-", "_", ".")) else "_"
+            for ch in str(value)
+        ).strip("._")
+        return (cleaned or "snapshot")[:80]
 
     @staticmethod
     def _to_korean_summary(objects: list, vlm_scene: dict) -> str:

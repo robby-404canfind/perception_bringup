@@ -72,6 +72,8 @@ class ScanNode(Node):
             duration_sec=req.duration_sec,
             snapshot_pub=self.snapshot_pub,
             feedback_cb=_publish_fb,
+            mission_id=req.mission_id,
+            request_id=req.request_id,
         )
 
         # Result

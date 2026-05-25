@@ -71,6 +71,8 @@ class FindNode(Node):
             sweep_deg=req.sweep_deg,
             snapshot_pub=self.snapshot_pub,
             feedback_cb=_publish_fb,
+            mission_id=req.mission_id,
+            request_id=req.request_id,
         )
 
         result = Find.Result()
