@@ -1,9 +1,11 @@
 """actions/scan.py — exec_scan() 핵심 로직.
 
 현재 위치에서 로봇 본체 회전(cmd_vel)으로 주변을 스캔합니다.
-watch_classes/watch_ids에 매칭되는 객체가 발견되면 FOUND 이벤트를 기록합니다.
+scan Action은 특정 클래스를 찾지 않고, YOLO가 감지한 모든 객체를 보고합니다.
+find() 내부 재사용 경로에서는 filter_classes로 대상을 제한할 수 있습니다.
 """
 
+from collections import Counter
 import json
 import time
 
@@ -18,8 +20,7 @@ def exec_scan(
     vlm_client=None,
     sweep_deg: float = 360.0,
     duration_sec: float = 30.0,
-    watch_classes: list | None = None,
-    watch_ids: list | None = None,
+    filter_classes: list | None = None,
     snapshot_pub=None,
     feedback_cb=None,
     stop_on_first: bool = False,
@@ -35,7 +36,12 @@ def exec_scan(
             find()의 Phase 2에서 사용합니다.
 
     Returns:
-        dict: {"success": bool, "objects_found": list, "scene_description": str|None}
+        dict: {
+            "success": bool,
+            "objects_found": list,
+            "class_summary": str,
+            "scene_description": str|None,
+        }
     """
     angular_speed = 0.3  # rad/s (~17 deg/s)
     poll_interval = 0.1  # 100ms
@@ -50,7 +56,7 @@ def exec_scan(
     last_fb_time = 0.0
     node.get_logger().info(
         f"scan 시작: sweep={sweep_deg}°, duration={duration_sec}s, "
-        f"watch_classes={watch_classes}, watch_ids={watch_ids}"
+        f"filter_classes={filter_classes}"
     )
 
     while (time.time() - start) < duration_sec:
@@ -59,17 +65,22 @@ def exec_scan(
 
         snap = perception_cache.snapshot()
         for obj in snap["targets"]:
-            if _matches(obj, watch_classes, watch_ids):
+            if _matches(obj, filter_classes):
                 key = f"{obj.get('class', '?')}_{obj.get('id', '?')}"
                 if key not in found_objects:
                     found_objects[key] = obj
                     node.get_logger().info(
                         f"FOUND: {obj.get('class')} id={obj.get('id')} "
+                        f"conf={obj.get('confidence', '?')} "
                         f"range={_format_range(obj.get('range_m'))}"
                     )
                     # Snapshot 요청
                     if snapshot_pub:
-                        req = {"snapshot_id": key, "requester": "scan", "reason": "FOUND"}
+                        req = {
+                            "snapshot_id": key,
+                            "requester": "scan",
+                            "reason": "FOUND",
+                        }
                         snapshot_pub.publish(String(data=json.dumps(req)))
                     if stop_on_first:
                         should_stop = True
@@ -78,9 +89,12 @@ def exec_scan(
         # Feedback 보고 (throttle)
         now = time.time()
         if feedback_cb and (now - last_fb_time) >= feedback_interval:
+            class_summary = _class_count_summary(found_objects.values())
             feedback_cb({
                 "state": "scanning",
-                "detail": f"watching {watch_classes or 'all'}",
+                "detail": _format_feedback_detail(
+                    class_summary, filter_classes
+                ),
                 "elapsed_sec": now - start,
                 "objects_found": len(found_objects),
             })
@@ -103,28 +117,48 @@ def exec_scan(
             pass
 
     elapsed = round(time.time() - start, 1)
+    objects_found = list(found_objects.values())
+    class_summary = _class_count_summary(objects_found)
     result = {
-        "success": len(found_objects) > 0,
-        "objects_found": list(found_objects.values()),
+        "success": len(objects_found) > 0,
+        "objects_found": objects_found,
+        "class_summary": class_summary,
         "scene_description": scene_desc,
         "elapsed_sec": elapsed,
     }
-    node.get_logger().info(f"scan 완료: {len(found_objects)}개 발견, {elapsed}s")
+    summary_text = class_summary or "none"
+    node.get_logger().info(
+        f"scan 완료: {len(objects_found)}개 발견 ({summary_text}), {elapsed}s"
+    )
     return result
 
 
-def _matches(obj: dict, watch_classes: list | None, watch_ids: list | None) -> bool:
-    if watch_classes and obj.get("class") in watch_classes:
+def _matches(obj: dict, filter_classes: list | None) -> bool:
+    if filter_classes and obj.get("class") in filter_classes:
         return True
-    if watch_ids and obj.get("id") in watch_ids:
-        return True
-    if not watch_classes and not watch_ids:
+    if not filter_classes:
         return True  # 필터 없으면 모든 객체 매칭
     return False
 
 
 def _format_range(range_m) -> str:
     return f"{range_m}m" if range_m is not None else "unknown"
+
+
+def _class_count_summary(objects) -> str:
+    counts = Counter(obj.get("class", "unknown") for obj in objects)
+    return ", ".join(f"{cls}({count})" for cls, count in sorted(counts.items()))
+
+
+def _format_feedback_detail(
+    class_summary: str,
+    filter_classes: list | None,
+) -> str:
+    detected = class_summary or "none"
+    if filter_classes:
+        filters = "classes=" + ",".join(filter_classes)
+        return f"filtering {filters} | detected {detected}"
+    return f"detected {detected}"
 
 
 def _publish_stop(cmd_pub, repeat: int = 5, interval_sec: float = 0.02):

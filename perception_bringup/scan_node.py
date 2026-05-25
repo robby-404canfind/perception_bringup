@@ -52,7 +52,7 @@ class ScanNode(Node):
         req = goal_handle.request
         self.get_logger().info(
             f"scan Goal 수신: mission_id={req.mission_id}, "
-            f"watch_classes={list(req.watch_classes)}, duration={req.duration_sec}s"
+            f"duration={req.duration_sec}s, sweep={req.sweep_deg}°, mode=all_objects"
         )
 
         def _publish_fb(fb: dict):
@@ -70,8 +70,6 @@ class ScanNode(Node):
             cmd_pub=self.cmd_pub,
             sweep_deg=req.sweep_deg,
             duration_sec=req.duration_sec,
-            watch_classes=list(req.watch_classes) if req.watch_classes else None,
-            watch_ids=list(req.watch_ids) if req.watch_ids else None,
             snapshot_pub=self.snapshot_pub,
             feedback_cb=_publish_fb,
         )
@@ -79,12 +77,16 @@ class ScanNode(Node):
         # Result
         result = Scan.Result()
         result.success = result_data["success"]
+        class_summary = result_data.get("class_summary", "")
         result.message = (
-            f"{len(result_data['objects_found'])}개 발견"
+            f"{len(result_data['objects_found'])}개 발견: {class_summary}"
             if result_data["success"]
             else "미발견"
         )
-        result.objects_json = json.dumps(result_data["objects_found"])
+        result.objects_json = json.dumps(
+            result_data["objects_found"],
+            ensure_ascii=False,
+        )
 
         goal_handle.succeed()
         return result

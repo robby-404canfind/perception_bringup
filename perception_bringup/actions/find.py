@@ -75,7 +75,7 @@ def exec_find(
         vlm_client=vlm_client,
         sweep_deg=sweep_deg,
         duration_sec=timeout_sec,
-        watch_classes=[target_class],
+        filter_classes=[target_class],
         snapshot_pub=snapshot_pub,
         feedback_cb=_scan_feedback_forwarder,
         stop_on_first=True,
