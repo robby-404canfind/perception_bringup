@@ -19,7 +19,9 @@ def exec_follow(
     target_class: str = "person",
     target_distance_m: float = 2.0,
     max_time_sec: float = 60.0,
-    k_yaw: float = 0.005,
+    k_yaw: float = 0.0015,
+    max_angular_z: float = 0.4,
+    yaw_deadband_px: float = 30.0,
     k_dist: float = 0.3,
     lost_timeout: float = 5.0,
     feedback_cb=None,
@@ -82,7 +84,8 @@ def exec_follow(
         frame_cx = snap["frame_w"] / 2
         error_x = target["center"]["x"] - frame_cx
         twist = Twist()
-        twist.angular.z = -k_yaw * error_x
+        if abs(error_x) > yaw_deadband_px:
+            twist.angular.z = _clamp(-k_yaw * error_x, -max_angular_z, max_angular_z)
 
         # 거리 유지 (depth 있을 때만)
         range_m = target.get("range_m")
@@ -141,6 +144,10 @@ def _find_target(snap: dict, target_id: int, target_class: str) -> dict | None:
     if with_range:
         return min(with_range, key=lambda o: o["range_m"])
     return candidates[0]
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
 
 
 def _publish_stop(cmd_pub, repeat: int = 5, interval_sec: float = 0.02):
