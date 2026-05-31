@@ -23,3 +23,19 @@ perception_context_builder:
     snapshot_save_dir: "snapshots"
     system2_debug_image_topic: "/perception/system2/debug_image"
     system2_debug_font_path: ""
+
+assess_scene_node:
+  ros__parameters:
+    vlm_backend: "ollama"
+    vlm_model: "qwen2.5vl:7b"
+    vlm_timeout_sec: 30.0
+    image_topic: "/Tiago_Lite/Astra_rgb/image_color"
+    context_raw_topic: "/perception/context/raw"
+
+resolve_target_node:
+  ros__parameters:
+    vlm_backend: "ollama"
+    vlm_model: "qwen2.5vl:7b"
+    vlm_timeout_sec: 30.0
+    image_topic: "/Tiago_Lite/Astra_rgb/image_color"
+    context_raw_topic: "/perception/context/raw"

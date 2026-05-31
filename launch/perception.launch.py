@@ -1,7 +1,7 @@
 """perception.launch.py — Ch04 Perception 스택 실행.
 
 yolo_detector + perception_context_builder를 함께 실행합니다.
-find/scan/follow ActionServer 노드는 별도로 실행합니다.
+find/scan/follow/assess_scene/resolve_target ActionServer 노드는 별도로 실행합니다.
 """
 
 import os

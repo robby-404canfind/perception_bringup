@@ -36,6 +36,8 @@ setup(
             "find_node = perception_bringup.find_node:main",
             "scan_node = perception_bringup.scan_node:main",
             "follow_node = perception_bringup.follow_node:main",
+            "assess_scene_node = perception_bringup.assess_scene_node:main",
+            "resolve_target_node = perception_bringup.resolve_target_node:main",
         ],
     },
 )
