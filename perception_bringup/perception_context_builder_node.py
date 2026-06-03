@@ -10,7 +10,7 @@ import json
 import time
 from copy import deepcopy
 from pathlib import Path
-from threading import Thread
+from threading import Lock, Thread
 
 import cv2
 import numpy as np
@@ -52,6 +52,7 @@ class PerceptionContextBuilderNode(Node):
         self.declare_parameter(
             "system2_debug_image_topic", "/perception/system2/debug_image"
         )
+        self.declare_parameter("system2_debug_state_topic", "/system2/debug_state")
         self.declare_parameter("system2_debug_font_path", "")
 
         vlm_backend = self.get_parameter("vlm_backend").value
@@ -74,6 +75,9 @@ class PerceptionContextBuilderNode(Node):
         self._latest_frame_h = 0
         self._latest_image_w = 0
         self._latest_image_h = 0
+        self._vlm_lock = Lock()
+        self._vlm_in_flight = False
+        self._system2_debug_state: dict = {}
         self._system2_debug_font = self._load_debug_font(
             str(self.get_parameter("system2_debug_font_path").value or "")
         )
@@ -96,12 +100,16 @@ class PerceptionContextBuilderNode(Node):
         system2_debug_image_topic = self.get_parameter(
             "system2_debug_image_topic"
         ).value
+        system2_debug_state_topic = self.get_parameter(
+            "system2_debug_state_topic"
+        ).value
 
         # 구독
         self.create_subscription(String, detection_topic, self._on_detections, 10)
         image_topic = self.get_parameter("image_topic").value
         self.create_subscription(Image, image_topic, self._on_image, 10)
         self.create_subscription(String, snapshot_request_topic, self._on_snapshot_req, 10)
+        self.create_subscription(String, system2_debug_state_topic, self._on_system2_debug, 10)
 
         # publish
         self._pub_raw = self.create_publisher(String, context_raw_topic, 10)
@@ -150,11 +158,18 @@ class PerceptionContextBuilderNode(Node):
         # VLM Trigger 평가
         trigger_reason = self.trigger.evaluate(objects)
         if trigger_reason and self.latest_cv_image is not None:
-            Thread(
-                target=self._call_vlm,
-                args=(self.latest_cv_image.copy(), trigger_reason),
-                daemon=True,
-            ).start()
+            with self._vlm_lock:
+                if self._vlm_in_flight:
+                    self.get_logger().debug(
+                        f"VLM 호출 스킵: 이전 요청 처리 중 ({trigger_reason})"
+                    )
+                else:
+                    self._vlm_in_flight = True
+                    Thread(
+                        target=self._call_vlm,
+                        args=(self.latest_cv_image.copy(), trigger_reason),
+                        daemon=True,
+                    ).start()
 
         # context/raw 조립
         vlm_scene = self._latest_vlm_result or {}
@@ -181,13 +196,25 @@ class PerceptionContextBuilderNode(Node):
         self._publish_debug_image(objects, vlm_scene, vlm_age)
 
     def _call_vlm(self, cv_image: np.ndarray, reason: str):
-        self.get_logger().info(f"VLM 호출: {reason}")
-        result = self.vlm.describe_scene(cv_image)
-        self._latest_vlm_result = result
-        self._latest_vlm_time = time.time()
-        self.get_logger().info(
-            f"VLM 응답: {result.get('scene_summary', 'N/A')}"
-        )
+        try:
+            self.get_logger().info(f"VLM 호출: {reason}")
+            result = self.vlm.describe_scene(cv_image)
+            self._latest_vlm_result = result
+            self._latest_vlm_time = time.time()
+            self.get_logger().info(
+                f"VLM 응답: {result.get('scene_summary', 'N/A')}"
+            )
+        finally:
+            with self._vlm_lock:
+                self._vlm_in_flight = False
+
+    def _on_system2_debug(self, msg: String):
+        try:
+            data = json.loads(msg.data) if msg.data else {}
+        except json.JSONDecodeError:
+            return
+        if isinstance(data, dict):
+            self._system2_debug_state = data
 
     def _on_snapshot_req(self, msg: String):
         # Snapshot은 stream이 아니라 요청 기반 단발성 출력입니다.
@@ -310,6 +337,7 @@ class PerceptionContextBuilderNode(Node):
                     "detection_frame_h": detection_frame_h,
                     "image_encoding": image_encoding,
                     "vlm_age_sec": vlm_age,
+                    "system2_debug_state": deepcopy(self._system2_debug_state),
                 }
             )
             with save_paths["metadata"].open("w", encoding="utf-8") as f:
@@ -373,6 +401,7 @@ class PerceptionContextBuilderNode(Node):
             self._draw_text(debug_image, label, (x0, max(18, y0 - 6)), scale=0.5)
 
         self._draw_vlm_overlay(debug_image, vlm_scene, vlm_age)
+        self._draw_system2_overlay(debug_image, self._system2_debug_state)
         return debug_image
 
     @staticmethod
@@ -444,6 +473,91 @@ class PerceptionContextBuilderNode(Node):
             scale=0.55,
             bg_color=(0, 0, 220),
         )
+
+    def _draw_system2_overlay(self, image: np.ndarray, state: dict) -> None:
+        if not isinstance(state, dict) or not state:
+            return
+
+        lines = self._system2_overlay_lines(state)
+        if not lines:
+            return
+
+        if self._system2_debug_font is not None and PILImage is not None:
+            self._draw_unicode_overlay_block(
+                image,
+                lines,
+                self._system2_debug_font,
+                anchor="bottom",
+                fill=(0, 95, 165),
+            )
+            return
+
+        h = image.shape[0]
+        y = max(24, h - 24 * len(lines) - 8)
+        for line in lines:
+            self._draw_text(
+                image,
+                line,
+                (8, y),
+                scale=0.5,
+                bg_color=(0, 95, 165),
+            )
+            y += 24
+
+    @staticmethod
+    def _system2_overlay_lines(state: dict) -> list[str]:
+        mission_id = str(state.get("mission_id") or "")
+        phase = str(state.get("phase") or "")
+        current_index = state.get("current_step_index")
+        total_steps = state.get("total_steps")
+        current_step = state.get("current_step") or {}
+        plan_steps = state.get("plan_steps") or []
+
+        header = "System2"
+        if mission_id:
+            header += f" {mission_id}"
+        if phase:
+            header += f" {phase}"
+        if isinstance(current_index, int) and isinstance(total_steps, int) and total_steps > 0:
+            header += f" step {current_index + 1}/{total_steps}"
+
+        lines = [header]
+        if isinstance(current_step, dict) and current_step.get("task"):
+            lines.append(
+                "Now: "
+                + PerceptionContextBuilderNode._format_step_for_overlay(current_step)
+            )
+
+        if isinstance(plan_steps, list) and plan_steps:
+            compact = []
+            for idx, step in enumerate(plan_steps[:5]):
+                prefix = ">" if isinstance(current_index, int) and idx == current_index else " "
+                compact.append(
+                    f"{prefix}{idx + 1}:{PerceptionContextBuilderNode._format_step_for_overlay(step)}"
+                )
+            lines.extend(compact[:4])
+        return lines[:6]
+
+    @staticmethod
+    def _format_step_for_overlay(step: dict) -> str:
+        task = str(step.get("task") or "?")
+        params = step.get("params") or {}
+        if not isinstance(params, dict):
+            return task
+        for key in (
+            "location",
+            "area",
+            "status",
+            "target_class",
+            "query",
+            "target_query",
+        ):
+            if key in params and params[key] not in (None, ""):
+                value = " ".join(str(params[key]).split())
+                if len(value) > 34:
+                    value = value[:31].rstrip() + "..."
+                return f"{task}({value})"
+        return task
 
     @staticmethod
     def _image_for_png(image: np.ndarray, encoding: str) -> np.ndarray:
@@ -519,6 +633,22 @@ class PerceptionContextBuilderNode(Node):
         lines: tuple[str, str],
         font,
     ) -> None:
+        PerceptionContextBuilderNode._draw_unicode_overlay_block(
+            image,
+            list(lines),
+            font,
+            anchor="top",
+            fill=(210, 0, 0),
+        )
+
+    @staticmethod
+    def _draw_unicode_overlay_block(
+        image: np.ndarray,
+        lines: list[str],
+        font,
+        anchor: str = "top",
+        fill: tuple[int, int, int] = (210, 0, 0),
+    ) -> None:
         h, w = image.shape[:2]
         max_text_width = max(80, w - 28)
 
@@ -545,13 +675,16 @@ class PerceptionContextBuilderNode(Node):
         pad_y = 5
         line_gap = 4
         x = 8
-        y = 8
+        y = 8 if anchor == "top" else max(8, h - (sum(line_heights) + line_gap * (len(line_heights) - 1) + pad_y * 2) - 8)
         rect_w = min(w - x - 1, max(line_widths) + pad_x * 2)
-        rect_h = min(h - y - 1, sum(line_heights) + line_gap + pad_y * 2)
+        rect_h = min(
+            h - y - 1,
+            sum(line_heights) + line_gap * max(0, len(line_heights) - 1) + pad_y * 2,
+        )
 
         draw.rectangle(
             (x, y, x + rect_w, y + rect_h),
-            fill=(210, 0, 0),
+            fill=fill,
         )
         cursor_y = y + pad_y
         for line, box, line_h in zip(fitted_lines, line_boxes, line_heights):
