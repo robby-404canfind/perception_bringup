@@ -14,7 +14,7 @@ import time
 
 import cv2
 import numpy as np
-from openai import OpenAI, APITimeoutError, APIConnectionError
+from openai import OpenAI, APITimeoutError, APIConnectionError, APIStatusError
 
 _DEFAULT_SCENE_PROMPT = """\
 너는 모바일 로봇의 시각 분석가이다.
@@ -99,11 +99,18 @@ class VLMClient:
                     max_tokens=500,
                 )
             content = response.choices[0].message.content
+            if not content:
+                return {"scene_summary": "VLM 응답 내용 없음", "social_hints": []}
             return json.loads(content)
-        except (json.JSONDecodeError, KeyError, IndexError):
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError, AttributeError):
             return {"scene_summary": "VLM 응답 파싱 실패", "social_hints": []}
         except (APITimeoutError, APIConnectionError) as e:
             return {"scene_summary": f"VLM 연결 실패: {e}", "social_hints": []}
+        except APIStatusError as e:
+            return {
+                "scene_summary": f"VLM API 오류: status={e.status_code}",
+                "social_hints": [],
+            }
         except TimeoutError:
             return {"scene_summary": "VLM 호출 대기 중: 다른 VLM 요청 처리 중", "social_hints": []}
 

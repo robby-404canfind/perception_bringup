@@ -10,7 +10,7 @@ yolo_detector:
 perception_context_builder:
   ros__parameters:
     vlm_backend: "openrouter"
-    vlm_model: "openrouter/free"
+    vlm_model: "google/gemma-4-31b-it"
     min_trigger_interval: 15.0
     image_topic: "/Tiago_Lite/Astra_rgb/image_color"
     detection_topic: "/perception/detections"
@@ -28,7 +28,7 @@ perception_context_builder:
 assess_scene_node:
   ros__parameters:
     vlm_backend: "openrouter"
-    vlm_model: "openrouter/free"
+    vlm_model: "google/gemma-4-31b-it"
     vlm_timeout_sec: 60.0
     image_topic: "/Tiago_Lite/Astra_rgb/image_color"
     context_raw_topic: "/perception/context/raw"
@@ -36,7 +36,7 @@ assess_scene_node:
 resolve_target_node:
   ros__parameters:
     vlm_backend: "openrouter"
-    vlm_model: "openrouter/free"
+    vlm_model: "google/gemma-4-31b-it"
     vlm_timeout_sec: 60.0
     image_topic: "/Tiago_Lite/Astra_rgb/image_color"
     context_raw_topic: "/perception/context/raw"
