@@ -20,7 +20,7 @@ class PerceptionTrigger:
     ) -> str | None:
         """VLM Trigger 조건을 평가합니다.
 
-        반환값이 None이 아니면 VLM을 호출해야 합니다.
+        반환값이 None이 아니면 VLM을 호출합니다.
         ACTION_REQUEST는 Rate Limit을 우회합니다.
         """
         now = time.time()

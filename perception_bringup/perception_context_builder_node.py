@@ -217,7 +217,7 @@ class PerceptionContextBuilderNode(Node):
             else None
         )
 
-        # 기존 topic 호환성을 위해 snapshot publish는 bgr8 Image로 유지합니다.
+        # 기존 topic과 호환되도록 snapshot publish는 bgr8 Image 형식을 씁니다.
         snap_msg = self.cv_bridge.cv2_to_imgmsg(debug_source_image, encoding="bgr8")
         if self.latest_image_header is not None:
             snap_msg.header = self.latest_image_header

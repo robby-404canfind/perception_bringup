@@ -1,8 +1,8 @@
 """actions/scan.py — exec_scan() 핵심 로직.
 
 현재 위치에서 로봇 본체 회전(cmd_vel)으로 주변을 스캔합니다.
-scan Action은 특정 클래스를 찾지 않고, YOLO가 감지한 모든 객체를 보고합니다.
-find() 내부 재사용 경로에서는 filter_classes로 대상을 제한할 수 있습니다.
+scan Action은 특정 클래스를 찾지 않고 YOLO가 감지한 모든 객체를 보고합니다.
+find() 내부 재사용 경로에서는 filter_classes로 대상을 제한합니다.
 """
 
 from collections import Counter
@@ -45,7 +45,7 @@ def exec_scan(
             "scene_description": str|None,
         }
     """
-    # scan은 cmd_vel 회전 중 cache를 폴링하고, 처음 본 객체만 기록합니다.
+    # scan은 cmd_vel 회전 중 cache를 폴링하며 처음 본 객체만 기록합니다.
     angular_speed = 0.3  # rad/s (~17 deg/s)
     poll_interval = 0.1  # 100ms
     feedback_interval = 1.0  # 1초 throttle

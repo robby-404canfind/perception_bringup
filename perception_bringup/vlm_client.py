@@ -14,9 +14,9 @@ from openai import OpenAI, APITimeoutError, APIConnectionError
 
 _DEFAULT_SCENE_PROMPT = """\
 너는 모바일 로봇의 시각 분석가이다.
-첨부된 이미지를 분석하여, 로봇이 안전하게 이동하기 위해 알아야 할 정보를 JSON으로 반환하라.
+첨부 이미지를 분석해 로봇의 안전 이동에 필요한 정보를 JSON으로 반환하라.
 
-출력 형식 (반드시 유효한 JSON만 출력):
+출력 형식 (유효한 JSON만 출력):
 {
   "scene_summary": "장면 한 줄 요약 (한국어)",
   "social_hints": [
@@ -30,7 +30,7 @@ _DEFAULT_SCENE_PROMPT = """\
   ]
 }
 
-type 필드는 반드시 avoid_between_people, prefer_side_pass, slow_down, clear_path 중 하나의 문자열만 사용하라.
+type 필드는 avoid_between_people, prefer_side_pass, slow_down, clear_path 중 하나여야 한다.
 social_hints가 없으면 빈 배열 []을 반환하라.
 """
 
