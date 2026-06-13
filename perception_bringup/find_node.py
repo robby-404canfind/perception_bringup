@@ -1,6 +1,6 @@
 """find_node.py — find() ActionServer 래퍼 노드.
 
-/system1/find Action을 수신하고, exec_find()를 실행하고,
+/system1/find Action을 수신한 뒤 exec_find()를 실행하고
 Feedback과 Result를 publish합니다. known class local find만 지원합니다.
 """
 

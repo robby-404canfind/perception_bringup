@@ -1,6 +1,6 @@
 """perception_cache.py — 스레드 안전 비전 상태 캐시.
 
-/perception/detections를 구독하는 쪽이 update_from_msg()를 호출하고,
+/perception/detections를 구독하는 쪽이 update_from_msg()를 호출하면
 scan/find/follow 액션이 snapshot()으로 최신 상태를 읽습니다.
 """
 

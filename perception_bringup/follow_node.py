@@ -1,6 +1,6 @@
 """follow_node.py — follow() ActionServer 래퍼 노드.
 
-/system1/follow Action을 수신하고, exec_follow()를 실행하고,
+/system1/follow Action을 수신한 뒤 exec_follow()를 실행하고
 Feedback과 Result를 publish합니다.
 """
 

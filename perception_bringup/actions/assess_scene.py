@@ -122,7 +122,7 @@ def _build_assessment_prompt(query: str, objects: list, vlm_scene: dict) -> str:
 [기존 VLM scene context]
 {scene_json}
 
-반드시 아래 JSON object 하나만 반환하라.
+응답은 JSON object 하나만 허용한다. 아래 구조를 따른다.
 {{
   "query": "{query}",
   "has_suspicious_person": true 또는 false,

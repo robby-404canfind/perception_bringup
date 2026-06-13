@@ -1,6 +1,6 @@
 """scan_node.py — scan() ActionServer 래퍼 노드.
 
-/system1/scan Action을 수신하고, exec_scan()을 실행하고,
+/system1/scan Action을 수신한 뒤 exec_scan()을 실행하고
 Feedback과 Result를 publish합니다.
 """
 
@@ -64,7 +64,7 @@ class ScanNode(Node):
             msg.objects_found = int(fb.get("objects_found", 0))
             goal_handle.publish_feedback(msg)
 
-        # exec_scan 자체는 blocking이지만, MultiThreadedExecutor가 detection 구독을 계속 처리합니다.
+        # exec_scan 자체는 blocking이지만 MultiThreadedExecutor가 detection 구독을 계속 처리합니다.
         result_data = exec_scan(
             node=self,
             perception_cache=self.perception_cache,

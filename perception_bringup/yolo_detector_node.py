@@ -1,6 +1,6 @@
 """yolo_detector_node.py — YOLO26 Detection + Tracking + Depth ROS2 노드.
 
-RGB 이미지를 구독하고, YOLO26 .track()으로 tracked detections를 생성하고,
+RGB 이미지를 구독하고 YOLO26 .track()으로 tracked detections를 생성하며
 depth 카메라에서 range_m을 추정하여 /perception/detections에 JSON으로 publish합니다.
 """
 
@@ -50,7 +50,7 @@ class YoloDetectorNode(Node):
         self.latest_depth = None
         self.latest_cv_image = None
 
-        # 센서 토픽은 오래된 프레임보다 최신 프레임이 중요합니다.
+        # 센서 토픽에서는 오래된 프레임보다 최신 프레임을 우선합니다.
         image_qos = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST,

@@ -155,7 +155,7 @@ def _build_resolve_prompt(target_query: str, people: list) -> str:
 [candidate tracks]
 {json.dumps(candidates, ensure_ascii=False)}
 
-반드시 아래 JSON object 하나만 반환하라.
+응답은 JSON object 하나만 허용한다. 아래 구조를 따른다.
 {{
   "target_query": "{target_query}",
   "matched": true 또는 false,
